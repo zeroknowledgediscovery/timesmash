@@ -181,10 +181,15 @@ class _AUC_Feature:
     def transform(self, data):
 
         it = _list_of_dataframe_iter(data)
+        print("transform _AUC_Feature 1")
         with callwithValidKwargs(self.pool,self._all_kwargs) as executor:
             args = product(it, [self._model_manager[name]._models for name in self._model_manager],[self._all_kwargs])
-            res = executor.map(get_auc, args)
+            res = list(executor.map(get_auc, args))
+            print("transform _AUC_Feature 2")
+
         features = pd.concat(res, sort=False, axis = 0, join = 'outer' )
+        print("transform _AUC_Feature 3")
+
         features = features.reset_index().groupby('index').max()
         features = features.sort_index(axis=1)
         return features
