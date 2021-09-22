@@ -18,11 +18,12 @@ from functools import partial
 import faulthandler, inspect
 
 BIN_PATH = os.path.dirname(os.path.realpath(__file__)) + "/bin/"
-
+TS_TEMP_FOLDER_PATH = "ts_temp"
 
 def os_remove(filename):
     try:
         os.remove(filename)
+        pass
     except OSError:
         pass
 
@@ -51,6 +52,7 @@ def process_train_labels(x, y):
 
 
 def _clean_up_temp_folder(path, signal=None, frame=None):
+    return
     if signal is not None:
         traceback.print_stack(frame)
     try:
@@ -61,10 +63,6 @@ def _clean_up_temp_folder(path, signal=None, frame=None):
         os.rmdir(os.path.dirname(path))
     except OSError:
         pass
-
-    # print(frame.print_stack())
-    # aulthandler.dump_traceback()
-    # print(traceback)
 
 def getValidKwargs(func, argsDict):
 
@@ -87,7 +85,7 @@ def add_signal(path):
     # faulthandler.register(signal.SIGINT)
 
 
-def RANDOM_NAME(clean=True, path = "ts_temp"):
+def RANDOM_NAME(clean=True, path = TS_TEMP_FOLDER_PATH):
     if not os.path.isdir(path):
         os.mkdir(path)
     path = os.path.join(path, "clean_")

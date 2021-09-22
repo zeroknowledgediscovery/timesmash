@@ -10,6 +10,7 @@ import subprocess as sp
 import shutil
 import numpy as np
 import pandas as pd
+import math
 from sklearn import preprocessing
 from timesmash.utils import RANDOM_NAME, BIN_PATH, process_train_labels
 
@@ -84,7 +85,7 @@ class Quantizer(object):
 
     def fit(self, data_dir, label=None, *, force_refit=False):
         if self._num_quantizations == 0:
-            return data_dir
+            return self
         if self._fitted and not force_refit:
             return None
         if (label is None) and (type(data_dir) is not str):
@@ -171,7 +172,8 @@ class Quantizer(object):
 
     def transform(self, data, *, output_type="matrix"):
         if self._num_quantizations == 0:
-            return data
+            yield data
+            return
         assert self._fitted, (
             "'fit()' or 'fit_transform()' must be called"
             + " prior to running 'transform()'"
@@ -515,7 +517,7 @@ class Quantizer(object):
         return num_col
 
     def get_n_quantizations(self):
-        return len(self._feature_order)
+        return max(1,len(self._feature_order))
 
     def set_quantization(self, pa, *, pr=[], d=0, n=0):
         key = self._write_quantizer_params(pr, d, n, pa)

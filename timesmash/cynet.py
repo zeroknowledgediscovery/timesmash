@@ -8,6 +8,7 @@ import glob
 import shutil 
 from timesmash import Quantizer
 from functools import partial
+import traceback
 from timesmash.utils import BIN_PATH, RANDOM_NAME, callwithValidKwargs
 from multiprocessing import Pool
 from sklearn import metrics
@@ -17,6 +18,32 @@ CYNET_PATH = bin_path + 'cynet'
 FLEXROC_PATH = bin_path + 'flexroc'
 XgenESeSS_PATH = bin_path + 'XgenESeSS_cynet'
 
+import time
+
+ERROR_RIDIRECT = False
+DEBUG_MPI = False
+MPI_DEBUG_OUTPUT_FOLDER = './debug_output'
+
+def debug_mpi(*message, sleep = False):
+    out_message = ''
+    for string in message:
+        out_message = out_message + str(string)
+    if DEBUG_MPI or (ERROR_RIDIRECT and ('rror:' in out_message)):
+        if not os.path.isdir(MPI_DEBUG_OUTPUT_FOLDER):
+            os.mkdir(MPI_DEBUG_OUTPUT_FOLDER)
+        from mpi4py import MPI
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank() 
+        if sleep:
+            time.sleep(int(rank))
+        file = '{}/rank_{}.txt'.format(MPI_DEBUG_OUTPUT_FOLDER, rank)
+        if os.path.exists(file):
+            append_write = 'a' # append if already exists
+        else:
+            append_write = 'w' # make a new file if not
+        with open(file,append_write) as f:
+            f.write(str(out_message)+ '\n')
+
 class XHMMFeatures:
     def __init__(self,*, pool = Pool, **kwargs):
         self._quantizer = None
@@ -24,9 +51,11 @@ class XHMMFeatures:
         self._fitted = False
         self._pool = pool
         self._all_kwargs = kwargs
+        self._pickle_models = True
         #assert 'detrending' in self._all_kwargs
 
     def fit(self, data, labels):
+        debug_mpi('enter fit')
         data = _check_data(data, labels)
         self._quantizer = Quantizers_chained(pool =  self._pool,**self._all_kwargs)
         q_iter = self._quantizer.fit_transform(data, labels)
@@ -35,9 +64,12 @@ class XHMMFeatures:
             featurizer = _AUC_Feature(pool =  self._pool,**self._all_kwargs)
             featurizer._set_up(q, labels)
             self._discreet_feturizer.append(featurizer)
+        debug_mpi("setup done")
         iters = chain.from_iterable([it._get_iter() for it in self._discreet_feturizer])
+        debug_mpi("start fitting models")
         with callwithValidKwargs(self._pool,self._all_kwargs) as executor:
             executor.map(run_XgenESeSS, iters)
+        debug_mpi("done fitting models")
         self._fitted = True
         return self
 
@@ -67,12 +99,26 @@ class XHMMFeatures:
         for f in self._discreet_feturizer:
             f.pool = value
         self._quantizer.pool = value
+
+    @property
+    def pickle_models(self): 
+        return self._pickle_models     
     
-def quantizer_fit_helper(arg):
+    @pickle_models.setter
+    def pickle_models(self, value):
+        self._pickle_models = value
+        for f in self._discreet_feturizer:
+            f._pickle_models = value
+    
+def fit_helper(arg):
+    debug_mpi("fit start")
+
     q = arg[0]
     data = arg[1]
     label = arg[2]
     q.fit(data, label)
+    debug_mpi("fit end")
+
     return q
 
     
@@ -93,11 +139,7 @@ class Quantizers_chained:
         #print('fitting', len(data))
 
         with callwithValidKwargs(self.pool,self._all_kwargs) as executor:
-        #with Pool() as executor:
-            self._quantizers = list(executor.map(quantizer_fit_helper, zip([callwithValidKwargs(Quantizer, self._all_kwargs)
- for x in data], data, repeat(labels))))
-        #print('fitted', len(data))
-
+            self._quantizers = list(executor.map(fit_helper, zip([callwithValidKwargs(Quantizer, self._all_kwargs) for x in data], data, repeat(labels))))
         self._fitted = True
         return self
 
@@ -117,50 +159,80 @@ class Quantizers_chained:
 
 
 def run_XgenESeSS(to_call):
-    out = subprocess.check_output(to_call, shell=True)  
+    try:
+        debug_mpi('start generating models')
+        out = subprocess.check_output(to_call, shell=True)  
+        debug_mpi('end generating models')
+
+        return out
+    except Exception as e:
+        debug_mpi('error xgen: ' + str(e) + str(traceback.format_exc()))
+        raise e
     
 def get_auc(args):
-    data = args[0][0].dropna(axis=1)
-    person = args[0][1]
-    models = args[1]
-    kwargs = args[2]
-    folder_name = RANDOM_NAME()
-    os.mkdir(folder_name)
-    for ts in data.index:
-        temp_df = pd.DataFrame(data.loc[ts]).T
-        temp_df.to_csv('{}/{}'.format(folder_name,ts),index=False, header=False, sep =' ')
-    res = []
-    for ts in data.index:
-        stored_model = models[ts]
-        auc, _, _ = _simulateModel(MODEL_PATH = stored_model, DATA_PATH = folder_name+'/', RUNLEN = data.shape[1], **kwargs).run()
-        res.append(auc)
-    shutil.rmtree(folder_name)
-    df = pd.DataFrame(res).T
-    df.columns = [models[name] for name in models]
-    df.index = [person]
-    return df
+    try:
+    #if True:
+        debug_mpi('in mpi: '+str(args) + ' end arg', sleep = True)
+        data = args[0][0].dropna(axis=1)
+        person = args[0][1]
+        models = args[1]
+        kwargs = args[2]
+        folder_name = RANDOM_NAME()
+        debug_mpi('dir making:', folder_name)
+        os.mkdir(folder_name)
+        debug_mpi('dir made :', folder_name,  os.path.isdir(folder_name))
+        assert( os.path.isdir(folder_name))
+        for ts in data.index:
+            temp_df = pd.DataFrame(data.loc[ts]).T
+            temp_df.to_csv('{}/{}'.format(folder_name,ts),index=False, header=False, sep =' ')
+            assert(os.path.isfile('{}/{}'.format(folder_name,ts)))
+            debug_mpi('writing ts: {}   {}/{}'.format(ts,folder_name,ts), os.path.isfile('{}/{}'.format(folder_name,ts)))
+        res = []
+        debug_mpi('starting cynet:' + str(data.index))
+        for ts in data.index:
+            debug_mpi('get_auc for loop: ' + str(ts))
 
+            stored_model = models[ts]
+            auc, _, _ = _simulateModel(MODEL_PATH = stored_model, DATA_PATH = folder_name+'/', RUNLEN = data.shape[1], **kwargs).run(**kwargs)
+            res.append(auc)
+            debug_mpi('get_auc for loop end: ' +  str(ts))
+        shutil.rmtree(folder_name)
+        if 'get_log_file' in kwargs and kwargs['get_log_file']:
+            return res
+        df = pd.DataFrame(res).T
+        df.columns = [models[name] for name in models]
+        df.index = [person]
+        debug_mpi('get_auc return', str(df))
+        return df
+    
+    except Exception as e:
+        debug_mpi('error message3: ' + str(e) + str(traceback.format_exc()))
+        raise e
+    
 class _AUC_Feature:
-    def __init__(self,*, pool = Pool,**kwargs ):
+    def __init__(self,*, pool = Pool, **kwargs ):
         self._model_manager = {}
         self._fitted = False
         self._fitted = False
         self.pool = pool
         self._all_kwargs = kwargs
+        self.pickle_models = True
         self._it_list = []
         
     def _set_up(self, data, labels):
+        debug_mpi("enter setup")
         data = _check_data(data, labels)
         for label in labels[labels.columns[0]].unique():
             flat_data =  _flatten_data(data, labels, label)
             self._model_manager[label] = callwithValidKwargs(_xgModels ,self._all_kwargs)._setup_files(flat_data)
             self._it_list.append(self._model_manager[label]._get_commands())
+        debug_mpi("exit setup")
         return self
 
     def _run(self):
         with callwithValidKwargs(self.pool,self._all_kwargs) as executor:
             it = self._get_iter()
-            executor.map(run_XgenESeSS, it)
+            [executor.map(run_XgenESeSS, it)]
         '''
         for label in labels[labels.columns[0]].unique():
             print(label)
@@ -181,14 +253,20 @@ class _AUC_Feature:
     def transform(self, data):
 
         it = _list_of_dataframe_iter(data)
-        print("transform _AUC_Feature 1")
+        debug_mpi("transform _AUC_Feature 1")
         with callwithValidKwargs(self.pool,self._all_kwargs) as executor:
-            args = product(it, [self._model_manager[name]._models for name in self._model_manager],[self._all_kwargs])
-            res = list(executor.map(get_auc, args))
-            print("transform _AUC_Feature 2")
+        #with self.pool(unordered = True) as executor:
 
+            args = product(it, [self._model_manager[name]._models for name in self._model_manager],[self._all_kwargs])
+            debug_mpi("transform before execute")
+
+            res = executor.map(get_auc, args)
+            debug_mpi("transform _AUC_Feature 2")
+        if 'get_log_file' in self._all_kwargs and self._all_kwargs['get_log_file']:
+            return list(res)
+        
         features = pd.concat(res, sort=False, axis = 0, join = 'outer' )
-        print("transform _AUC_Feature 3")
+        debug_mpi("transform _AUC_Feature 3")
 
         features = features.reset_index().groupby('index').max()
         features = features.sort_index(axis=1)
@@ -197,6 +275,16 @@ class _AUC_Feature:
     def fit_transform(self, data, labels):
         return self.fit(data, labels).transform(data)
     
+    @property
+    def pickle_models(self): 
+        return self._pickle_models     
+    
+    @pickle_models.setter
+    def pickle_models(self, value):
+        self._pickle_models = value
+        for label in self._model_manager:
+            self._model_manager[label] = value
+            
 def _check_data(data, labels):
     index = labels.index
     
@@ -244,21 +332,21 @@ class _xgModels:
                  delay_min=0,
                  delay_max=0,
                  NUM=40,
-                 #PARTITION=[0.5],
-                 run_local = True,
                  DERIVATIVE=0,
                  self_models = False,
+                 epsilon = 0.025,
                  CAP_P=False):
 
-
+        debug_mpi(epsilon)
         self.TS_PATH = RANDOM_NAME(clean=True)
         self.NAME_PATH = RANDOM_NAME(clean=True)
         self.FILEPATH = RANDOM_NAME(clean=True)
         self.BEG = delay_min
         self.END = delay_max
         self.NUM = NUM
-        self.RUN_LOCAL = run_local
         self.DERIVATIVE = DERIVATIVE
+        self.epsilon = epsilon
+        self.pickle_models = True
         self._models = {}
         self._commands = []
         self._fitted = True
@@ -277,13 +365,20 @@ class _xgModels:
                  + " -k \"  :" + str(INDEX) +  " \"  -B " + str(self.BEG)\
                  + "  -E " +str(self.END) + ' -n ' +str(self.NUM)\
                  + ' -T symbolic' + ' -N '\
-                 + self.NAME_PATH + ' -u '+ str(self.DERIVATIVE) +' -m -G 10000 -v 0 -A 1 -q -w '+  model_file +  self._self_flag + ' -g 0.01'
+                 + self.NAME_PATH + ' -u '+ str(self.DERIVATIVE) +' -m -G 10000 -v 0 -A 1 -q -w '+  model_file +  self._self_flag + ' -g 0.01' + ' -e ' + str(self.epsilon)
             yield xgstr
 
 
     def _setup_files(self, data):
-        pd.DataFrame(data.columns).to_csv(self.FILEPATH, header=False, index=False, sep= '\n', line_terminator = '')
-        pd.DataFrame(data.index).to_csv(self.NAME_PATH, header=False, index=False, sep= '\n', line_terminator = '')
+        # change based on python version
+        cols = pd.DataFrame(data.columns)
+        idx = pd.DataFrame(data.index)
+        if idx.shape[1] == 1: # test for pandas compatibility 
+            cols = cols.T
+            idx = idx.T
+
+        cols.to_csv(self.FILEPATH, header=False, index=False, sep= '\n', line_terminator = '')
+        idx.to_csv(self.NAME_PATH, header=False, index=False, sep= '\n', line_terminator = '')
         data.to_csv(self.TS_PATH, header=False, index=False, sep = ' ')
         self._indexes = data.index
         return self
@@ -299,22 +394,23 @@ class _xgModels:
     def __getstate__(self):
         picked_data = {}
         picked_data['class'] = self.__dict__
-        picked_data['files'] = {}
-        #print(d['files'])
-        for names, file in self._models.items():
-            with open(file,"r") as f:
-                picked_data['files'][names] = f.read()
+        if self.pickle_models:
+            picked_data['files'] = {}
+            for names, file in self._models.items():
+                with open(file,"r") as f:
+                    picked_data['files'][names] = f.read()
         return picked_data 
     
     
     def __setstate__(self, d):
         self.__dict__ = d['class']
-        for name, data in d['files'].items():
+        if self.pickle_models:
+            for name, data in d['files'].items():
 
-            file_name = RANDOM_NAME(clean=True)
-            #self._models[name] = name
-            with open(self._models[name],"w") as f:
-                f.write(data)
+                file_name = RANDOM_NAME(clean=True)
+                #self._models[name] = name
+                with open(self._models[name],"w") as f:
+                    f.write(data)
 
                     
 class _simulateModel:
@@ -344,7 +440,7 @@ class _simulateModel:
         assert os.path.exists(MODEL_PATH), "model file cannot be found: " + MODEL_PATH
         assert any(glob.iglob(DATA_PATH+"*")), \
             "split data files cannot be found."
-
+        debug_mpi(' in sim models __init__')
         self.MODEL_PATH = MODEL_PATH
         self.DATA_PATH = DATA_PATH
         self.RUNLEN = RUNLEN
@@ -372,7 +468,9 @@ class _simulateModel:
             POSITIVE_CLASS_COLUMN=5,
             EVENTCOL=3,
             tpr_threshold=0.85,
-            fpr_threshold=0.15):
+            fpr_threshold=0.15,
+            get_log_file = False,
+                 **kwargs):
 
         '''
         This function is intended to replace the cynrun.sh shell script. This
@@ -395,14 +493,21 @@ class _simulateModel:
         '''
         if FLEX_TAIL_LEN == -1:
             FLEX_TAIL_LEN = self.RUNLEN
+            total_run = self.RUNLEN
+        if get_log_file:
+            total_run = self.RUNLEN + FLEX_TAIL_LEN
         if LOG_PATH is None:
             LOG_PATH = RANDOM_NAME(clean=True)
         cyrstr = self.CYNET_PATH + ' -J ' + self.MODEL_PATH\
             + ' -T ' + DATA_TYPE + ' -N '\
-            + str(self.RUNLEN) + ' -x ' + str(self.READLEN)\
+            + str(total_run) + ' -x ' + str(self.READLEN)\
             + ' -l ' + LOG_PATH\
             + ' -w ' + self.DATA_PATH + ' -U ' + str(self.DERIVATIVE) + ' -H 0'
-        subprocess.check_output(cyrstr, shell=True)
+        debug_mpi('start: ' + cyrstr)
+        output = subprocess.check_output(cyrstr, shell=True)
+        debug_mpi('end: ' + cyrstr)
+        if get_log_file:
+            return LOG_PATH, None, None
         if not self._use_flex_roc:
             try:
                 log_data = pd.read_csv(LOG_PATH, sep ='\s+', header = None)
@@ -411,6 +516,8 @@ class _simulateModel:
 
                 os.remove(LOG_PATH)
             except Exception as e:
+                os.remove(LOG_PATH)
+                #debug_mpi('exit5: ' + cyrstr + str(e) + str(traceback.format_exc()))
                 return (np.nan, np.nan, np.nan)
             multi_class = log_data.shape[1]>6
             try:
@@ -420,21 +527,23 @@ class _simulateModel:
                     auc_new = metrics.roc_auc_score(log_data[3], log_data.loc[:,5])
             except Exception as e:
                 if log_data[3].unique().shape[0]==1:
+                    #debug_mpi('exit1: ' + cyrstr+ str(e)+ str(traceback.format_exc()))
                     return 1,1,1
+                #debug_mpi('exit2: ' + cyrstr+ str(e)+ str(traceback.format_exc()))
                 return np.nan, np.nan, np.nan
+            debug_mpi('exit3: ' + cyrstr)
             return auc_new, 0, 0
         flexroc_str = self.FLEXROC_PATH + ' -i ' + LOG_PATH\
             + ' -w ' + str(FLEXWIDTH) + ' -x '\
             + str(FLEX_TAIL_LEN) + ' -C '\
             + str(POSITIVE_CLASS_COLUMN) + ' -E ' + str(EVENTCOL)\
             + ' -t ' + str(tpr_threshold) + ' -f ' + str(fpr_threshold)
-        #flexstr_arg = shlex.split(flexroc_str)
         output_str = subprocess.check_output(flexroc_str, shell=True)
         results = output_str.split()
         auc = float(results[1])
         tpr = float(results[7])
         fpr = float(results[13])
 
-
+        debug_mpi('exit4: ' + cyrstr)
         return auc, tpr, fpr
-    
+

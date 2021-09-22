@@ -8,5 +8,5 @@ from timesmash.smash import InferredHMMLikelihood as InferredHMMLikelihood
 from timesmash.smash import InferredHMMLikelihoodState
 from timesmash.utils import genesess, xgenesess, serializer, BIN_PATH
 from timesmash.cynet import _AUC_Feature, XHMMFeatures
-from timesmash.XHMMClustering import XHMMClustering
+from timesmash.clustering import XHMMClustering
 from timesmash._version import __version__

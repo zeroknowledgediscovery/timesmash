@@ -10,17 +10,20 @@ from timesmash.featurizer import Get_Fit_Transform
 import pandas as pd
 from collections import defaultdict
 import warnings
+from timesmash.utils import RANDOM_NAME, callwithValidKwargs
 
 
 class InferredHMMLikelihood(Get_Fit_Transform):
-    def __init__(self, *, quantizer=None, epsilon=0.25, clean=True, **kwargs):
+    def __init__(self, *, quantizer=None, epsilon=0.25, clean=True, pickle_models = True,**kwargs):
         self._fitted = False
         self.train_feature = []
         self._llk_function = _llk
         self._eps = epsilon
         self._clean = clean
-        self.all_models_file = defaultdict(lambda: dict())
-        self._qtz = Quantizer(clean=self._clean, **kwargs) if quantizer is None else quantizer
+        self.pickle_models = pickle_models
+        self.all_models_file = defaultdict(dict)
+        kwargs['clean'] = self._clean
+        self._qtz = callwithValidKwargs(Quantizer,kwargs) if quantizer is None else quantizer
         assert quantizer is None or quantizer.IsFitted(), "Initialize with fitted quantizer"
 
 
@@ -75,24 +78,25 @@ class InferredHMMLikelihood(Get_Fit_Transform):
                     self.all_models_file[i][label] = model_name
 
     def __getstate__(self):
+
         picked_data = {}
         picked_data['class'] = self.__dict__
-        picked_data['files'] = {}
-
-        for q in range(self._qtz.get_n_quantizations()):
-            for label, models in self.all_models_file[q].items():
-                with open(models,"r") as f:
-                    picked_data['files'][models] = f.read()
+        if self.pickle_models:
+            picked_data['files'] = {}
+            for q in range(self._qtz.get_n_quantizations()):
+                for label, models in self.all_models_file[q].items():
+                    with open(models,"r") as f:
+                        picked_data['files'][models] = f.read()
         return picked_data 
     
     
     def __setstate__(self, d):
-
         self.__dict__ = d['class']
-        RANDOM_NAME(clean=True)
-        for name, data in d['files'].items():
-            with open(name,"w") as f:
-                f.write(data)
+        if self.pickle_models:
+            RANDOM_NAME(clean=True)
+            for name, data in d['files'].items():
+                with open(name,"w") as f:
+                    f.write(data)
 
 
 class InferredHMMLikelihoodState(InferredHMMLikelihood):
