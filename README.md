@@ -1,16 +1,22 @@
-<img src="http://zed.uchicago.edu/logo/logozed1.png" alt="logo" width="500" />
-
 # Time Smash
 
-Universal similarity amongst arbitrary data streams without a priori knowledge, features, or training.
+Time series clustering and classification suite using notions of *Universal similarity* among  data streams, especially without a priori knowledge about the "correct" features to use for time series data.
 
-Can be used to solve time series clustering and classification problems.
++ Featurization algorithms: SymbolicDerivative, InferredHMMLikelihood, Csmash
++ Distance measure: LikelihoodDistance
 
-Featurization algorithms: SymbolicDerivative, InferredHMMLikelihood, Csmash
-	
-Distance measure: LikelihoodDistance
+## Example publications
 
-For questions or suggestions contact:zed@uchicago.edu
+
++ Huang, Yi, Victor Rotaru, and Ishanu Chattopadhyay. "Sequence likelihood divergence for fast time series comparison." Knowledge and Information Systems 65, no. 7 (2023): 3079-3098. https://link.springer.com/article/10.1007/s10115-023-01855-0
+
++ Chattopadhyay, Ishanu, and Hod Lipson. "Data smashing: uncovering lurking order in data." Journal of The Royal Society Interface 11, no. 101 (2014): 20140826.
+https://royalsocietypublishing.org/doi/10.1098/rsif.2014.0826
+
++ Timesmash: Process-Aware Fast Time Series Clustering and Classification https://easychair.org/publications/preprint/qpVv
+
+
+For questions or suggestions contact:research@paraknowledge.ai
 
 ##	Usage examples	
 ### SymbolicDerivative
