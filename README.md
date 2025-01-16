@@ -1,5 +1,8 @@
 # Time Smash
 
+<img src="timesmash.png" alt="TimeSmash Logo" width="200">
+
+
 Time series clustering and classification suite using notions of *Universal similarity* among  data streams, especially without a priori knowledge about the "correct" features to use for time series data.
 
 + Featurization algorithms: SymbolicDerivative, InferredHMMLikelihood, Csmash
